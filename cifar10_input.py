@@ -185,5 +185,3 @@ def read_validation_data():
     validation_array = whitening_image(validation_array)
 
     return validation_array, validation_labels
-
-

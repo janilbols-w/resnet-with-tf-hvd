@@ -1,7 +1,7 @@
 # Coder: Wenxin Xu
 # Github: https://github.com/wenxinxu/resnet_in_tensorflow
 # ==============================================================================
-
+import os
 from resnet import *
 from datetime import datetime
 import time
@@ -430,6 +430,7 @@ class Train(object):
 # Initialize Horovod
 hvd.init() # virtaitech
 print('virtaitech: rank-%d init horovod'%hvd.rank())
+os.environ.setdefault('CUDA_VISIBLE_DEVICES','%d'%hvd.rank())
 
 # download & extract data
 maybe_download_and_extract()
@@ -438,6 +439,7 @@ maybe_download_and_extract()
 print('viratitech: set visible device as hvd.rank')
 config = tf.ConfigProto() # virtaitech
 config.gpu_options.visible_device_list = str(hvd.rank()) # virtaitech
+config.gpu_options.allow_growth = True # virtaitech
 
 # Initialize the Train object
 train = Train()
