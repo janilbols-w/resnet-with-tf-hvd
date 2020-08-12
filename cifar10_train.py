@@ -7,7 +7,7 @@ from datetime import datetime
 import time
 from cifar10_input import *
 import pandas as pd
-
+import horovod.tensorflow as hvd # virtaitech
 
 
 class Train(object):
@@ -27,6 +27,7 @@ class Train(object):
         lr_placeholder is for learning rate. Feed in learning rate each time of training
         implements learning rate decay easily
         '''
+        print('virtaitech: rank-%d set placeholders'%hvd.rank())
         self.image_placeholder = tf.placeholder(dtype=tf.float32,
                                                 shape=[FLAGS.train_batch_size, IMG_HEIGHT,
                                                         IMG_WIDTH, IMG_DEPTH])
@@ -79,7 +80,7 @@ class Train(object):
         '''
         This is the main function for training
         '''
-
+        print('virtaitech: rank-%d Start training'%hvd.rank())
         # For the first step, we are loading all training images and validation images into the
         # memory
         all_data, all_labels = prepare_train_data(padding_size=FLAGS.padding_size)
@@ -93,6 +94,11 @@ class Train(object):
         saver = tf.train.Saver(tf.global_variables())
         summary_op = tf.summary.merge_all()
         init = tf.initialize_all_variables()
+
+        # When not using MonitoredTrainingSession, 
+        # execute the hvd.broadcast_global_variables op after global variables have been initialized
+        hvd.broadcast_global_variables # virtaitech
+        
         sess = tf.Session()
 
 
@@ -229,8 +235,11 @@ class Train(object):
         saver = tf.train.Saver(tf.all_variables())
         sess = tf.Session()
 
-        saver.restore(sess, FLAGS.test_ckpt_path)
-        print( 'Model restored from ', FLAGS.test_ckpt_path)
+        if hvd.rank() == 0:
+            saver.restore(sess, FLAGS.test_ckpt_path)
+            print( 'Model restored from ', FLAGS.test_ckpt_path)
+        else:
+            print( 'worker will not save model')
 
         prediction_array = np.array([]).reshape(-1, NUM_CLASS)
         # Test by batches
@@ -317,7 +326,7 @@ class Train(object):
         :param train_batch_size: int
         :return: augmented train batch data and labels. 4D numpy array and 1D numpy array
         '''
-        offset = np.random.choice(EPOCH_SIZE - train_batch_size, 1)[0]
+        offset = np.random.choice(EPOCH_SIZE - train_batch_size, 1)[0] #TODO: modify data offset
         batch_data = train_data[offset:offset+train_batch_size, ...]
         batch_data = random_crop_and_flip(batch_data, padding_size=FLAGS.padding_size)
 
@@ -348,6 +357,7 @@ class Train(object):
         tf.summary.scalar('train_loss_avg', ema.average(total_loss))
 
         opt = tf.train.MomentumOptimizer(learning_rate=self.lr_placeholder, momentum=0.9)
+        opt = hvd.DistributedOptimizer(opt) # virtaitech
         train_op = opt.minimize(total_loss, global_step=global_step)
         return train_op, train_ema_op
 
@@ -417,12 +427,19 @@ class Train(object):
         return np.mean(loss_list), np.mean(error_list)
 
 
+# Initialize Horovod
+hvd.init() # virtaitech
+print('virtaitech: rank-%d init horovod'%hvd.rank())
+
+# download & extract data
 maybe_download_and_extract()
+
+# Pin GPU to be used to process local rank (one GPU per process)
+print('viratitech: set visible device as hvd.rank')
+config = tf.ConfigProto() # virtaitech
+config.gpu_options.visible_device_list = str(hvd.rank()) # virtaitech
+
 # Initialize the Train object
 train = Train()
 # Start the training session
 train.train()
-
-
-
-
