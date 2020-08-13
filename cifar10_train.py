@@ -1,5 +1,5 @@
-# Coder: Wenxin Xu
-# Github: https://github.com/wenxinxu/resnet_in_tensorflow
+# Coder: janilbols
+# Github: https://github.com/janilbols-w/resnet-with-tf-hvd/
 # ==============================================================================
 import os
 from resnet import *
@@ -27,7 +27,8 @@ class Train(object):
         lr_placeholder is for learning rate. Feed in learning rate each time of training
         implements learning rate decay easily
         '''
-        print('virtaitech: rank-%d set placeholders'%hvd.rank())
+        if FLAGS.DEBUG: # virtaitech
+            print('virtaitech: rank-%d set placeholders'%hvd.rank())
         self.image_placeholder = tf.placeholder(dtype=tf.float32,
                                                 shape=[FLAGS.train_batch_size, IMG_HEIGHT,
                                                         IMG_WIDTH, IMG_DEPTH])
@@ -78,7 +79,8 @@ class Train(object):
         '''
         This is the main function for training
         '''
-        print('virtaitech: rank-%d Start training'%hvd.rank())
+        if FLAGS.DEBUG: # virtaitech
+            print('virtaitech: rank-%d Start training'%hvd.rank())
         # For the first step, we are loading all training images and validation images into the
         # memory
         all_data, all_labels = prepare_train_data(padding_size=FLAGS.padding_size)
@@ -171,7 +173,7 @@ class Train(object):
             if step % FLAGS.report_freq == 0:
                 # virtaitech: verify model is updated correctly; 
                 # all model copies are the same, after each updates
-                if DEBUG:
+                if FLAGS.DEBUG:
                     weights = np.sum(sess.run('fc/fc_weights:0'))
                     if step > 0:
                         print('virtaitech: rank-%d step%d diff(fc/fc_weights:0)'%(hvd.rank(),step) , weights - prev_weights)
@@ -436,32 +438,25 @@ class Train(object):
 
 # Initialize Horovod
 end2end_start_time = time.time()
-hvd.init() # virtaitech
-# print('virtaitech: rank-%d init horovod'%hvd.rank())
-FLAGS.train_batch_size = int(FLAGS.train_batch_size / hvd.size())
-print('virtaitech: rank-%d train_batch_size'%hvd.rank(), FLAGS.train_batch_size)
-try:
-    DEBUG = int(os.environ.get('DEBUG'))
-except:
-    DEBUG = 0
 
-# ORION_ENABLE = os.environ.get('ORION_ENABLE')
-# print('virtaitech: orion_enable ', str(ORION_ENABLE))
-# if not ORION_ENABLE or ORION_ENABLE=='0':
-#     os.environ.setdefault('CUDA_VISIBLE_DEVICES','%d'%hvd.rank())
-#     print('virtaitech: set CUDA_VISIBLE_DEVICES')
-# else:
-#     print('virtaitech: orion enabled')
+# virtaitech: init horovod
+hvd.init() 
+# virtaitech: rescale batch size for each GPU, 
+# to asure total a fixed total batch size
+FLAGS.train_batch_size = int(FLAGS.train_batch_size / hvd.size()) 
+# virtaitech logs
+if FLAGS.DEBUG: 
+    print('virtaitech: rank-%d train_batch_size'%hvd.rank(), FLAGS.train_batch_size)
 
 # download & extract data
 maybe_download_and_extract()
 
+# virtaitech
 # Pin GPU to be used to process local rank (one GPU per process)
-print('viratitech: set visible device as hvd.rank')
+if FLAGS.DEBUG:
+    print('viratitech: set visible device as hvd.rank')
 config = tf.ConfigProto() # virtaitech
-# config.gpu_options.allow_growth = True # virtaitech
 config.gpu_options.visible_device_list = str(hvd.local_rank()) # virtaitech
-# tf.device('/GPU:%d'%hvd.local_rank())
 
 # Initialize the Train object
 train = Train()

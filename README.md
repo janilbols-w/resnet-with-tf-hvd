@@ -2,11 +2,31 @@
 
 This implementation of [resnet](http://arxiv.org/abs/1512.03385) and [its variants](https://arxiv.org/abs/1603.05027)  is designed to be straightforward and friendly to new ResNet users. You can train a resnet on cifar10 by downloading and running the code. There are screen outputs, tensorboard statistics and tensorboard graph visualization to help you monitor the training process and visualize the model.
 
-Now the code works with tensorflow 1.0.0 and 1.1.0, but it's no longer compatible with earlier versions.
 
+=============== Add by Viratitech/Janilbols =================  
+Now the code works with tensorflow 1.13 + horovod   
+Checkout to branch "hvd-v1.0" which is horovod enabled, go to https://horovod.readthedocs.io/en/latest/tensorflow.html for more information  
+you can train it with virtaitech/orion (GPU virtualization program), run with single node horovod settings to perform crossnode training  
+For more virtaitehc information, please refer to https://virtaitech.com/  
 
-#### If you like the code, please star it! You are welcome to post questions and suggestions on my github.
-
+## Quick start
+### dependency
+- pip install opencv-python pandas
+- install openmpi
+- install NCCL
+- install horovod
+### run distribute version
+```bash
+horovodrun -np <N_GPUS> -H localhost:<N_GPUS> python cifar10_train.py [<args>, ..., <args>]
+```
+for example, to run **2+2** gpu with virtaitech/orion vGPU resource
+```
+export ORION_VGPU=4
+export ORION_GMEM=15000
+export ORION_RATIO=100
+export ORION_CROSS_NODE=1
+horovodrun -np 4 -H localhost:4 python cifar10_train.py --train_batch_size 128 --report_freq 8000 --train_steps 80000
+```
 
 ## Table of Contents
 * [Validation errors](#validation-errors)
@@ -104,6 +124,9 @@ There are five categories of hyper-parameters.
 **ckpt_path**: str. The path of the checkpoint that you want to load
 
 **is_use_ckpt**: boolean. If yes,  use a checkpoint and continue the training from the checkpoint
+
+#### 6. virtaitech DEBUG
+**DEBUG**: boolean. If yes, it will print out debugging logs and verify distributed model training synchronization correctness, by summing up **fc/fc_weights**
 
 -----------------------------------------------------------------------------------------------------------------------------------
 

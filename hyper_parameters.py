@@ -54,5 +54,7 @@ training''')
 tf.app.flags.DEFINE_string('test_ckpt_path', 'model_110.ckpt-79999', '''Checkpoint
 directory to restore''')
 
+## virtaitech FLAGS
+tf.app.flags.DEFINE_boolean('DEBUG', False, '''whether to activate DEBUG methods, including logs''')
 
 train_dir = 'logs_' + FLAGS.version + '/'
