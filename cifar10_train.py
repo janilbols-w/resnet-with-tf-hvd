@@ -48,13 +48,11 @@ class Train(object):
         '''
         global_step = tf.Variable(0, trainable=False)
         validation_step = tf.Variable(0, trainable=False)
-
         # Logits of training data and valiation data come from the same graph. The inference of
         # validation data share all the weights with train data. This is implemented by passing
         # reuse=True to the variable scopes of train graph
         logits = inference(self.image_placeholder, FLAGS.num_residual_blocks, reuse=False)
         vali_logits = inference(self.vali_image_placeholder, FLAGS.num_residual_blocks, reuse=True)
-
         # The following codes calculate the train loss, which is consist of the
         # softmax cross entropy and the relularization loss
         regu_losses = tf.get_collection(tf.GraphKeys.REGULARIZATION_LOSSES)
@@ -94,13 +92,8 @@ class Train(object):
         saver = tf.train.Saver(tf.global_variables())
         summary_op = tf.summary.merge_all()
         init = tf.initialize_all_variables()
-
-        # When not using MonitoredTrainingSession, 
-        # execute the hvd.broadcast_global_variables op after global variables have been initialized
-        hvd.broadcast_global_variables # virtaitech
         
-        sess = tf.Session()
-
+        sess = tf.Session(config=config) # virtaitech: add configuration for session, to set GPU        
 
         # If you want to load from a checkpoint
         if FLAGS.is_use_ckpt is True:
@@ -108,6 +101,12 @@ class Train(object):
             print( 'Restored from checkpoint...')
         else:
             sess.run(init)
+        
+        # virtaitech (quote from horovod doc): 
+        # when not using MonitoredTrainingSession, 
+        # execute the hvd.broadcast_global_variables op after global variables have been initialized
+        bcast_op = hvd.broadcast_global_variables(0) # virtaitech
+        sess.run(bcast_op) # virtaitech
 
         # This summary writer object helps write summaries on tensorboard
         summary_writer = tf.summary.FileWriter(train_dir, sess.graph)
@@ -122,7 +121,6 @@ class Train(object):
         print ('----------------------------')
 
         for step in range(FLAGS.train_steps):
-
             train_batch_data, train_batch_labels = self.generate_augment_train_batch(all_data, all_labels,
                                                                         FLAGS.train_batch_size)
 
@@ -169,42 +167,51 @@ class Train(object):
                                   self.vali_label_placeholder: validation_batch_labels,
                                   self.lr_placeholder: FLAGS.init_lr})
             duration = time.time() - start_time
-
-
+            
             if step % FLAGS.report_freq == 0:
-                summary_str = sess.run(summary_op, {self.image_placeholder: train_batch_data,
-                                                    self.label_placeholder: train_batch_labels,
-                                                    self.vali_image_placeholder: validation_batch_data,
-                                                    self.vali_label_placeholder: validation_batch_labels,
-                                                    self.lr_placeholder: FLAGS.init_lr})
-                summary_writer.add_summary(summary_str, step)
+                # virtaitech: verify model is updated correctly; 
+                # all model copies are the same, after each updates
+                if DEBUG:
+                    weights = np.sum(sess.run('fc/fc_weights:0'))
+                    if step > 0:
+                        print('virtaitech: rank-%d step%d diff(fc/fc_weights:0)'%(hvd.rank(),step) , weights - prev_weights)
+                    prev_weights = weights
+                    print('virtaitech: rank-%d step%d sum(fc/fc_weights:0)'%(hvd.rank(), step), weights)
+                
+                if hvd.rank() == 0: # do validation for rank-0 only
+                    summary_str = sess.run(summary_op, {self.image_placeholder: train_batch_data,
+                                                        self.label_placeholder: train_batch_labels,
+                                                        self.vali_image_placeholder: validation_batch_data,
+                                                        self.vali_label_placeholder: validation_batch_labels,
+                                                        self.lr_placeholder: FLAGS.init_lr})
+                    summary_writer.add_summary(summary_str, step)
 
-                num_examples_per_step = FLAGS.train_batch_size
-                examples_per_sec = num_examples_per_step / duration
-                sec_per_batch = float(duration)
+                    num_examples_per_step = FLAGS.train_batch_size
+                    examples_per_sec = num_examples_per_step / duration
+                    sec_per_batch = float(duration)
 
-                format_str = ('%s: step %d, loss = %.4f (%.1f examples/sec; %.3f ' 'sec/batch)')
-                print( format_str % (datetime.now(), step, train_loss_value, examples_per_sec,
-                                    sec_per_batch))
-                print( 'Train top1 error = ', train_error_value)
-                print( 'Validation top1 error = %.4f' % validation_error_value)
-                print( 'Validation loss = ', validation_loss_value)
-                print( '----------------------------')
+                    format_str = ('%s: step %d, loss = %.4f (%.1f examples/sec; %.3f ' 'sec/batch)')
+                    print( format_str % (datetime.now(), step, train_loss_value, examples_per_sec,
+                                        sec_per_batch))
 
-                step_list.append(step)
-                train_error_list.append(train_error_value)
-
-
+                    step_list.append(step)
+                    train_error_list.append(train_error_value)
+                    
+                    print( 'Train top1 error = ', train_error_value)
+                    print( 'Validation top1 error = %.4f' % validation_error_value)
+                    print( 'Validation loss = ', validation_loss_value)
+                    print( '----------------------------')
+           
 
             if step == FLAGS.decay_step0 or step == FLAGS.decay_step1:
                 FLAGS.init_lr = 0.1 * FLAGS.init_lr
                 print( 'Learning rate decayed to ', FLAGS.init_lr)
 
             # Save checkpoints every 10000 steps
-            if step % 10000 == 0 or (step + 1) == FLAGS.train_steps:
+            if (step % 10000 == 0 or (step + 1) == FLAGS.train_steps) and hvd.rank() == 0 : # virtaitech: only rank-0 will do the saving process
                 checkpoint_path = os.path.join(train_dir, 'model.ckpt')
                 saver.save(sess, checkpoint_path, global_step=step)
-
+                
                 df = pd.DataFrame(data={'step':step_list, 'train_error':train_error_list,
                                 'validation_error': val_error_list})
                 df.to_csv(train_dir + FLAGS.version + '_error.csv')
@@ -233,7 +240,7 @@ class Train(object):
 
         # Initialize a new session and restore a checkpoint
         saver = tf.train.Saver(tf.all_variables())
-        sess = tf.Session()
+        sess = tf.Session(config=config) # virtaitech: set gpu
 
         if hvd.rank() == 0:
             saver.restore(sess, FLAGS.test_ckpt_path)
@@ -326,7 +333,7 @@ class Train(object):
         :param train_batch_size: int
         :return: augmented train batch data and labels. 4D numpy array and 1D numpy array
         '''
-        offset = np.random.choice(EPOCH_SIZE - train_batch_size, 1)[0] #TODO: modify data offset
+        offset = np.random.choice(EPOCH_SIZE - train_batch_size, 1)[0] 
         batch_data = train_data[offset:offset+train_batch_size, ...]
         batch_data = random_crop_and_flip(batch_data, padding_size=FLAGS.padding_size)
 
@@ -428,9 +435,23 @@ class Train(object):
 
 
 # Initialize Horovod
+end2end_start_time = time.time()
 hvd.init() # virtaitech
-print('virtaitech: rank-%d init horovod'%hvd.rank())
-os.environ.setdefault('CUDA_VISIBLE_DEVICES','%d'%hvd.rank())
+# print('virtaitech: rank-%d init horovod'%hvd.rank())
+FLAGS.train_batch_size = int(FLAGS.train_batch_size / hvd.size())
+print('virtaitech: rank-%d train_batch_size'%hvd.rank(), FLAGS.train_batch_size)
+try:
+    DEBUG = int(os.environ.get('DEBUG'))
+except:
+    DEBUG = 0
+
+# ORION_ENABLE = os.environ.get('ORION_ENABLE')
+# print('virtaitech: orion_enable ', str(ORION_ENABLE))
+# if not ORION_ENABLE or ORION_ENABLE=='0':
+#     os.environ.setdefault('CUDA_VISIBLE_DEVICES','%d'%hvd.rank())
+#     print('virtaitech: set CUDA_VISIBLE_DEVICES')
+# else:
+#     print('virtaitech: orion enabled')
 
 # download & extract data
 maybe_download_and_extract()
@@ -438,10 +459,14 @@ maybe_download_and_extract()
 # Pin GPU to be used to process local rank (one GPU per process)
 print('viratitech: set visible device as hvd.rank')
 config = tf.ConfigProto() # virtaitech
-config.gpu_options.visible_device_list = str(hvd.rank()) # virtaitech
-config.gpu_options.allow_growth = True # virtaitech
+# config.gpu_options.allow_growth = True # virtaitech
+config.gpu_options.visible_device_list = str(hvd.local_rank()) # virtaitech
+# tf.device('/GPU:%d'%hvd.local_rank())
 
 # Initialize the Train object
 train = Train()
 # Start the training session
 train.train()
+
+end2end_end_time = time.time()
+print('virtaitech: time', end2end_end_time - end2end_start_time)

@@ -8,6 +8,7 @@ import numpy as np
 import pickle as cPickle
 import os
 import cv2
+import horovod.tensorflow as hvd # virtaitech
 
 data_dir = 'cifar10_data'
 full_data_dir = 'cifar10_data/cifar-10-batches-py/data_batch_'
@@ -22,7 +23,11 @@ NUM_CLASS = 10
 TRAIN_RANDOM_LABEL = False # Want to use random label for train data?
 VALI_RANDOM_LABEL = False # Want to use random label for validation?
 
-NUM_TRAIN_BATCH = 5 # How many batches of files you want to read in, from 0 to 5)
+# virtaitech: a quick adaption for distributed data loader, 
+# for each GPU process, it will open its corresponding data
+# since there's little chunked data, we make this change for the quickest
+# way to verify the feasibility to horovodlization this code
+NUM_TRAIN_BATCH = 1 # How many batches of files you want to read in, from 0 to 5) 
 EPOCH_SIZE = 10000 * NUM_TRAIN_BATCH
 
 
@@ -165,8 +170,12 @@ def prepare_train_data(padding_size):
     :return: all the train data and corresponding labels
     '''
     path_list = []
-    for i in range(1, NUM_TRAIN_BATCH+1):
-        path_list.append(full_data_dir + str(i))
+    # adjust data loader to support distributed training
+    # for each rank of process it will open its own data
+    # and ensure all the data train on different GPU will 
+    # not overlap
+    for i in range(0, NUM_TRAIN_BATCH):
+        path_list.append(full_data_dir + str(i*hvd.size()+hvd.rank()+1))
     data, label = read_in_all_images(path_list, is_random_label=TRAIN_RANDOM_LABEL)
     
     pad_width = ((0, 0), (padding_size, padding_size), (padding_size, padding_size), (0, 0))
