@@ -25,7 +25,7 @@ export ORION_VGPU=4
 export ORION_GMEM=15000
 export ORION_RATIO=100
 export ORION_CROSS_NODE=1
-horovodrun -np 4 -H localhost:4 python cifar10_train.py --train_batch_size 128 --report_freq 8000 --train_steps 80000
+horovodrun -np 4 -H localhost:4 python cifar10_train.py --train_batch_size 128 --report_freq 8000 --train_steps 80000 --num_residual_blocks 8
 ```
 
 ## Table of Contents
